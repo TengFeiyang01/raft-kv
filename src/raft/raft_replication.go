@@ -47,7 +47,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// return failure if prevLog not matched
-	if args.PrevLogIndex > len(rf.log) {
+	if args.PrevLogIndex >= len(rf.log) {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log too short, Len:%d < Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
@@ -85,6 +85,7 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	return tmpIndexes[majorityIdx]
 }
 
+// only valid in the given `term`
 func (rf *Raft) startReplication(term int) bool {
 	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
@@ -103,6 +104,12 @@ func (rf *Raft) startReplication(term int) bool {
 			return
 		}
 
+		// check context lost
+		if rf.contextLostLocked(Leader, term) {
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Context Lost, T%d:Leader->T%d:%s", peer, term, rf.currentTerm, rf.role)
+			return
+		}
+
 		// hanle the reply
 		// probe the lower index if the prevLog not matched
 		if !reply.Success {
@@ -112,7 +119,7 @@ func (rf *Raft) startReplication(term int) bool {
 				idx--
 			}
 			rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "Not match with S%d in %d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at %d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
 
