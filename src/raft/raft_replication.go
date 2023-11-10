@@ -27,6 +27,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	ConfilictIndex int
+	ConfilictTerm  int
 }
 
 // Peer's callback
@@ -46,18 +49,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.becomeFollowerLocked(args.Term)
 	}
 
+	defer rf.resetElectionTimerLocked()
+
 	// return failure if prevLog not matched
 	if args.PrevLogIndex >= len(rf.log) {
+		reply.ConfilictTerm = InvalidTerm
+		reply.ConfilictIndex = len(rf.log)
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log too short, Len:%d < Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm)
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Prev log not match, [%d]: T%d != T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
 
 	// append the leader log entries to local
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	rf.persistLocked()
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs: (%d, %d]", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 
@@ -68,7 +78,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.applyCond.Signal()
 	}
 
-	rf.resetElectionTimerLocked()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -113,12 +122,23 @@ func (rf *Raft) startReplication(term int) bool {
 		// hanle the reply
 		// probe the lower index if the prevLog not matched
 		if !reply.Success {
-			// go back a term
-			idx, term := args.PrevLogIndex, args.PrevLogTerm
-			for idx > 0 && rf.log[idx].Term == term {
-				idx--
+			prevIndex := rf.nextIndex[peer]
+			if reply.ConfilictTerm == InvalidTerm {
+				rf.nextIndex[peer] = reply.ConfilictIndex
+			} else {
+				firstIndex := rf.firstLogFor(reply.ConfilictTerm)
+				if firstIndex != InvalidIndex {
+					rf.nextIndex[peer] = firstIndex
+				} else {
+					rf.nextIndex[peer] = reply.ConfilictIndex
+				}
 			}
-			rf.nextIndex[peer] = idx + 1
+			// avoid unordered reply
+			// avoid the late reply move the nextIndex forward again
+			if rf.nextIndex[peer] > prevIndex {
+				rf.nextIndex[peer] = prevIndex
+			}
+
 			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at %d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
