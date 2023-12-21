@@ -10,6 +10,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (PartD).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if index > rf.commitIndex {
+		LOG(rf.me, rf.currentTerm, DSnap, "Couldn't snapshot before CommitIdx: %d>%d", index, rf.commitIndex)
+		return
+	}
+	if index <= rf.log.snapLastIdx {
+		LOG(rf.me, rf.currentTerm, DSnap, "Already snapshot in %d<=%d", index, rf.log.snapLastIdx)
+		return
+	}
 	rf.log.doSnapshot(index, snapshot)
 	rf.persistLocked()
 }
@@ -81,7 +89,7 @@ func (rf *Raft) installToPeer(peer, term int, args *InstallSnapshotArgs) {
 		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Lost or crashed", peer)
 		return
 	}
-	LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Reply=%v", peer, reply.String())
+	LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, SendSnapshot, Reply=%v", peer, reply.String())
 
 	// align the term
 	if reply.Term > rf.currentTerm {
