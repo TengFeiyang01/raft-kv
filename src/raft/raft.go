@@ -32,7 +32,7 @@ const (
 	electionTimeoutMin time.Duration = 250 * time.Millisecond
 	electionTimeoutMax time.Duration = 400 * time.Millisecond
 
-	replicateInterval time.Duration = 70 * time.Millisecond
+	replicateInterval time.Duration = 25 * time.Millisecond
 )
 
 const (
@@ -157,7 +157,13 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.role == Leader
 }
 
-// the service using Raft (e.g. a k/v server) wants to start
+func (rf *Raft) GetRaftStateSize() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.persister.RaftStateSize()
+}
+
+// Start the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
 // agreement and return immediately. there is no guarantee that this
