@@ -1,5 +1,10 @@
 package shardctrler
 
+import (
+	"log"
+	"time"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -17,10 +22,17 @@ package shardctrler
 // You will need to add fields to the RPC argument structs.
 //
 
-// The number of shards.
+// NShards The number of shards.
 const NShards = 10
 
-// A configuration -- an assignment of shards to groups.
+const (
+	OK             = "OK"
+	ErrNoKey       = "ErrNoKey"
+	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
+)
+
+// Config A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
 	Num    int              // config number
@@ -28,14 +40,18 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
-const (
-	OK = "OK"
-)
+func DefaultConfig() Config {
+	return Config{
+		Groups: make(map[int][]string),
+	}
+}
 
 type Err string
 
 type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
+	Servers  map[int][]string // new GID -> servers mappings
+	ClientId int64
+	SeqId    int64
 }
 
 type JoinReply struct {
@@ -44,7 +60,9 @@ type JoinReply struct {
 }
 
 type LeaveArgs struct {
-	GIDs []int
+	GIDs     []int
+	ClientId int64
+	SeqId    int64
 }
 
 type LeaveReply struct {
@@ -53,8 +71,10 @@ type LeaveReply struct {
 }
 
 type MoveArgs struct {
-	Shard int
-	GID   int
+	Shard    int
+	GID      int
+	ClientId int64
+	SeqId    int64
 }
 
 type MoveReply struct {
@@ -70,4 +90,48 @@ type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+const ClientRequestTimeout = 500 * time.Millisecond
+
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	OpType   OperationType
+	ClientId int64
+	SeqId    int64
+	Servers  map[int][]string // new GID -> servers mappings -- for Join
+	GIDs     []int            // -- for Leave
+	Shard    int              // -- for Move
+	GID      int              // -- for Move
+	Num      int              // desired config number -- for Query
+}
+
+type OpReply struct {
+	ControllerConfig Config
+	Err              Err
+}
+
+type OperationType uint8
+
+const (
+	OpJoin OperationType = iota
+	OpLeave
+	OpMove
+	OpQuery
+)
+
+type LastOperationInfo struct {
+	SeqId int64
+	Reply *OpReply
 }
